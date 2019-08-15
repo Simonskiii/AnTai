@@ -1,0 +1,185 @@
+# 历史纪录，然后cateCF补充
+import pandas as pd
+from operator import itemgetter
+import time
+import os
+
+
+item_id =[]   # items
+item_cate = {}  # key：cate values： list of items
+dataset = {}  # key:admin values: list of items the admin bought
+test_dataset = {}  # key:admin values: list of items the admin bought
+test_dataset1 = {}
+item_cate_cnt = {}
+item_count = pd.DataFrame()
+result = {}
+attr = pd.DataFrame()
+items_cnts = []
+s_users = []
+test = pd.DataFrame()
+
+
+def get_preprocessing(df_):
+    df = df_.copy()
+    df['hour'] = df['create_order_time'].apply(lambda x: int(x[11:13]))
+    df['day'] = df['create_order_time'].apply(lambda x: int(x[8:10]))
+    df['month'] = df['create_order_time'].apply(lambda x: int(x[5:7]))
+    df['year'] = df['create_order_time'].apply(lambda x: int(x[0:4]))
+    df['date'] = (df['month'].values - 7) * 31 + df['day']
+    return df
+
+
+
+
+def data_processing():
+    global attr
+    global item_count
+    global dataset
+    global test_dataset
+    global test_dataset1
+    global item_id
+    global items_cnts
+    global s_users
+    global test
+    t1 = time.process_time()
+    attr = pd.read_csv('..\\data\\Antai_AE_round1_item_attr_20190626.csv')
+    attr = attr.sort_values(by=['cate_id', 'item_id'], ascending=(True, True)).reset_index(drop=True)
+    attr = attr[['item_id', 'cate_id']]
+    train = pd.read_csv('..\\data\\Antai_AE_round1_train_20190626.csv')
+    train = train.fillna(int(0)).sort_values(by=['buyer_admin_id', 'irank'], ascending=(True, True)).reset_index(
+        drop=True)
+    test = pd.read_csv('..\\data\\Antai_AE_round1_test_20190626.csv')
+    test = test.fillna(int(0)).sort_values(by=['buyer_admin_id', 'irank'], ascending=(True, True)).reset_index(
+        drop=True)
+    train = pd.concat([train.loc[train['buyer_country_id'] == 'yy'], test])
+    # get_preprocessing(test).to_csv(r'11111.csv')
+    # os.system('pause')
+    item_id = attr.loc[:, 'item_id'].values
+    # 购买频率表
+    temp = train.loc[train.buyer_country_id == 'yy']
+    temp = temp.drop_duplicates(subset=['buyer_admin_id', 'item_id'], keep='first')
+    temp1 = pd.merge(temp, attr)
+    item_count = temp.groupby(['item_id']).size().reset_index()
+    item_count.columns = ['item_id', 'cnts']
+    item_count = item_count.sort_values('cnts', ascending=False)
+    item_count = pd.merge(item_count,attr)
+    attr_count = temp1.groupby(['cate_id']).size().reset_index()
+    attr_count.columns = ['cate_id', 'cnts']
+    attr_count = attr_count.sort_values('cnts', ascending=False)
+    items_cnts = item_count['item_id'].values.tolist()
+    # 物品种类表
+    for row in attr.itertuples(index=True, name='Pandas'):
+        cate = getattr(row, "cate_id")
+        item = getattr(row, "item_id")
+        item_cate.setdefault(cate, [])
+        item_cate[cate].append(item)
+    # 训练集用户购买物品字典
+    for row in train.itertuples(index=True, name='Pandas'):
+        admin = getattr(row, "buyer_admin_id")
+        cate = getattr(row, "cate_id")
+        dataset.setdefault(admin, {})
+        dataset[admin].setdefault(cate, 0)
+        dataset[admin][cate] += 1
+    for u, i in dataset.items():
+        dataset.update({u: sorted(i.items(), key=itemgetter(1), reverse=True)})
+    for row in item_count.itertuples(index=True, name='Pandas'):
+        cate = getattr(row, "cate_id")
+        item = getattr(row, "item_id")
+        item_cate_cnt.setdefault(cate, [])
+        item_cate_cnt[cate].append(item)
+
+    # 测试集用户购买物品字典
+    for row in test.itertuples(index=True, name='Pandas'):
+        admin = getattr(row, "buyer_admin_id")
+        cate = getattr(row, "cate_id")
+        test_dataset.setdefault(admin, {})
+        test_dataset[admin].setdefault(cate, 0)
+        test_dataset[admin][cate] += 1
+    for row in test.itertuples(index=True, name='Pandas'):
+        admin = getattr(row, "buyer_admin_id")
+        item = getattr(row, "item_id")
+        test_dataset1.setdefault(admin, {})
+        test_dataset1[admin].setdefault(item, 0)
+        test_dataset1[admin][item] += 1
+    for key in test_dataset:
+        for k in test_dataset[key]:
+            if k == 0:
+                s_users.append(key)
+                break
+    for u, i in test_dataset.items():
+        test_dataset.update({u: sorted(i.items(), key=itemgetter(1), reverse=True)})
+    for u, i in test_dataset1.items():
+        test_dataset1.update({u: sorted(i.items(), key=itemgetter(1), reverse=True)})
+    t2 = time.process_time()
+    print("处理完毕")
+    print(t2 - t1)
+
+
+def recommend():
+    for user in test_dataset1:
+        print(user)
+        l = []
+        for i in range(0, 6):
+            try:
+                l.append(list(test_dataset1[user])[i][0])
+            except:
+                break
+        if len(l) == 30:
+            result.setdefault(user, l)
+        else:
+            cates = {}
+            for i in test_dataset[user]:
+                cates.setdefault(i[0],0)
+                cates[i[0]] += 1
+            cates = sorted(cates.items(), key=itemgetter(1), reverse=True)
+            if user in s_users:
+                itemss = test.loc[test['buyer_admin_id'] == user].loc[test['cate_id'] == 0]['item_id'].values
+                itemss = set(itemss)
+                for i in itemss:
+                    l.append(i)
+                    if len(l) == 30:
+                        break
+            for key in cates:
+                try:
+                    if len(l) == 30:
+                        break
+                    else:
+                        items = item_cate_cnt[key[0]]
+                        if len(items) >= 10:
+                            length = 10
+                            for i in range(0,length):
+                                if len(l) == 30:
+                                    break
+                                l.append(items[i])
+                        else:
+                            for item in items:
+                                if len(l) == 30:
+                                    break
+                                l.append(item)
+                except:
+                    print(user)
+                    continue
+            if len(l) < 30:
+                items_ = items_cnts.copy()
+                length = 30 - len(l)
+                for i in range(0, length):
+                    it = items_.pop(0)
+                    while it in l:
+                        it = items_.pop(0)
+                    l.append(it)
+            result.setdefault(user, l)
+
+
+
+if __name__ == '__main__':
+    t1 = time.process_time()
+    data_processing()
+    recommend()
+    df = pd.DataFrame(result).T
+    df.to_csv(r'F:\0726 mm.csv')
+
+    # df = pd.DataFrame(result).T
+    # df.to_csv(r'F:\res1.csv')
+    # print(df)
+    # t2 = time.process_time()
+    # print(t2 - t1)
